@@ -1,4 +1,4 @@
-name: Auto-Update Omniverse (ZIP + Qualquer JS + APK)
+name: Build Omniverse v4 (Injecao Direta Infalivel)
 
 on:
   push:
@@ -9,77 +9,307 @@ permissions:
   contents: write
 
 jobs:
-  update-and-build:
+  build-apk-v4:
     runs-on: ubuntu-24.04
     steps:
       - name: 1. Baixar Repositorio
         uses: actions/checkout@v4
 
-      - name: 2. Descompactar ZIPs e Injetar Qualquer .JS automaticamente
+      - name: 2. Extrair ZIP e Limpar Cache Antigo
         run: |
-          # Remove workflow duplicado antigo se existir para evitar conflito
           rm -f .github/workflows/build-apk.yml
+          rm -rf www android
 
-          # Extrai qualquer .zip enviado
+          # Extrai qualquer .zip (mesmo que tenha subpastas) jogando os arquivos na raiz
           for z in *.zip; do
             if [ -f "$z" ]; then
-              unzip -o "$z" -d .
+              unzip -o -j "$z" -d . \vert{}\vert{} unzip -o "$z" -d .
               rm -f "$z"
             fi
           done
 
-          # Injeta QUALQUER arquivo .js (exceto sw.js) em todas as paginas HTML
-          for script in *.js; do
-            if [ -f "$script" ] && [ "$script" != "sw.js" ]; then
-              for page in index.html ficha.html dossie.html regras.html bestiario.html; do
-                if [ -f "$page" ] && ! grep -q "$script" "$page"; then
-                  sed -i "s|</body>|<script src=\"$script\"></script>\n</body>|g" "$page"
-                fi
-              done
-            fi
-          done
+          # Desativa o Service Worker antigo que travava a atualizacao no Android
+          echo "self.addEventListener('install', () => self.skipWaiting()); self.addEventListener('activate', () => self.clients.claim());" > sw.js
 
-          # Atualiza versao do cache offline
-          if [ -f "sw.js" ]; then
-            STAMP=$(date +%s)
-            sed -i "s/const CACHE_NAME = .*/const CACHE_NAME = 'omniverse-v-$STAMP';/g" sw.js
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Auto-Update: Modulos sincronizados [skip ci]" || true
-          git pull --rebase || true
-          git push || true
-
-      - name: 3. Configurar Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: 4. Configurar Java JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: 21
-
-      - name: 5. Empacotar Web e Sincronizar Android
+      - name: 3. Gerar Modulo Nativo (addons.js) Direto no Servidor
         run: |
-          npm install
-          mkdir -p www
-          cp *.html *.json *.js *.svg www/ 2>/dev/null || true
-          rm -rf android
-          npx cap add android
-          npx cap sync android
+          cat << 'EOF' > addons.js
+          (function () {
+            if (window.__omniV4Loaded) return;
+            window.__omniV4Loaded = true;
 
-      - name: 6. Compilar APK Atualizado
-        working-directory: ./android
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug
+            const isHub = !!document.getElementById('mod-ficha');
+            const isFicha = !!document.getElementById('ranking-geral');
+            const isDossie = !!document.getElementById('bct-list');
 
-      - name: 7. Disponibilizar APK nos Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Omniverse-Android-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+            const KEY_PLAYERS = 'omni_db_players_v4';
+            const KEY_CREATURES = 'omni_db_creatures_v4';
+            const KEY_ACTIVE_PLAYER = 'omni_active_player_id';
+            const KEY_ACTIVE_CREATURE = 'omni_active_creature_id';
+
+            const css = document.createElement('style');
+            css.textContent = `
+              html, body { max-width: 100vw !important; overflow-x: hidden !important; -webkit-text-size-adjust: 100%; }
+              * { box-sizing: border-box; max-width: 100%; }
+              .book-container, .manual, .shell, .wrap {
+                width: 100% !important; max-width: 100% !important;
+                padding: 12px 10px 95px 10px !important; margin: 0 !important; overflow-x: hidden !important;
+              }
+              table {
+                display: block !important; width: 100% !important; overflow-x: auto !important;
+                -webkit-overflow-scrolling: touch; font-size: 0.8em !important;
+              }
+              th, td { white-space: normal !important; min-width: 72px; word-break: break-word; padding: 6px !important; }
+              h1 { font-size: 1.35em !important; word-break: break-word; }
+              h2 { font-size: 1.15em !important; word-break: break-word; }
+
+              /* Dossie Mobile Fix */
+              .dossier-header, .dossier-header-bar {
+                display: flex !important; flex-direction: column !important;
+                align-items: center !important; text-align: center !important;
+                gap: 10px !important; padding: 14px 10px !important;
+              }
+              .creature-name-input { font-size: 1.25em !important; text-align: center !important; }
+              .sub-field-row { justify-content: center !important; }
+              .sub-field-row input { width: 100% !important; max-width: 220px !important; }
+              .photo-slot { margin: 0 auto !important; }
+              .page-body, .folder-content { padding: 12px 10px !important; }
+              .folder-tabs { display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 6px !important; padding: 8px 10px !important; }
+              .folder-tab { border-radius: 6px !important; border: 1px solid #a8956a !important; transform: none !important; text-align: center; padding: 8px 4px !important; }
+              .competencia-head { display: none !important; }
+              .competencia-row {
+                display: grid !important; grid-template-columns: 1fr 1fr 1fr !important;
+                gap: 6px !important; padding: 8px !important; background: rgba(0,0,0,0.06);
+                border-radius: 6px; margin-bottom: 8px !important;
+              }
+              .competencia-row input:first-child { grid-column: 1 / -1 !important; font-weight: 700; }
+
+              /* Abas em Grade 2x3 */
+              .tabs { display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 8px !important; }
+              .tab-btn { padding: 10px 6px !important; text-align: center !important; font-size: 0.72em !important; border-radius: 8px !important; }
+
+              /* Atributos em Cards */
+              .attr-grid { display: grid !important; grid-template-columns: repeat(2, 1fr) !important; gap: 10px !important; }
+              .attr-block {
+                background: linear-gradient(180deg, #161632 0%, #0b0b1a 100%) !important;
+                border: 1.5px solid #4a3d8f !important; border-radius: 14px !important; padding: 12px 8px !important;
+              }
+
+              /* Barra de Salvamento Nativo Mobile */
+              .omni-save-bar {
+                background: linear-gradient(90deg, #171736, #28193d); border: 1.5px solid #8c6dff;
+                border-radius: 12px; padding: 10px 12px; margin-bottom: 14px;
+                display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between;
+              }
+              .omni-save-bar .status-txt { font-size: 0.78em; color: #f2c069; font-weight: 800; font-family: sans-serif; }
+              .omni-save-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+              .omni-action-btn {
+                background: #8c6dff; color: #fff; border: none; padding: 8px 12px;
+                border-radius: 8px; font-weight: 700; font-size: 0.78em; cursor: pointer;
+              }
+              .omni-action-btn.green { background: #2eb872; }
+
+              /* Botao Flutuante de Dados (FAB) */
+              .omni-dice-fab {
+                position: fixed; bottom: 18px; right: 16px; width: 58px; height: 58px;
+                border-radius: 50%; background: linear-gradient(135deg, #2b8bf2, #7928ca);
+                border: 2px solid #a8d1ff; color: #fff; display: flex; align-items: center; justify-content: center;
+                box-shadow: 0 6px 20px rgba(43, 139, 242, 0.7); cursor: pointer; z-index: 999998;
+              }
+              .omni-dice-sheet {
+                position: fixed; bottom: 84px; right: 12px; width: 330px; max-width: calc(100vw - 24px);
+                background: #111224; border: 1.5px solid #5a67b8; border-radius: 18px; padding: 15px;
+                color: #eae6f8; font-family: sans-serif; box-shadow: 0 16px 45px rgba(0,0,0,0.92);
+                z-index: 999999; display: none;
+              }
+              .omni-dice-sheet.open { display: block; }
+              .dice-controls-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+              .dice-ctrl-box { background: #080914; border: 1px solid #2b3058; border-radius: 10px; padding: 7px; text-align: center; }
+              .dice-ctrl-box label { display: block; font-size: 0.65em; color: #9b93c4; margin-bottom: 4px; text-transform: uppercase; }
+              .stepper { display: flex; align-items: center; justify-content: space-between; }
+              .stepper button { width: 28px; height: 28px; border-radius: 7px; border: 1px solid #3d4478; background: #1a1c38; color: #fff; font-weight: 800; }
+              .stepper input { width: 48px !important; text-align: center !important; background: transparent !important; border: none !important; color: #fff !important; font-weight: 800 !important; font-size: 1em !important; padding: 0 !important; }
+              .dice-grid-btns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+              .die-btn {
+                background: #1c2042; border: 1px solid #485299; border-radius: 9px; padding: 9px 2px;
+                color: #fff; font-weight: 800; font-size: 0.82em; cursor: pointer; text-align: center;
+              }
+              .die-btn:active { background: #2b8bf2; }
+              .die-btn.d100-btn { grid-column: span 2; background: linear-gradient(135deg, #6f42c1, #ef5a63); border-color: #f2c069; }
+              .dice-result-box { background: #070812; border: 1px solid #303766; border-radius: 10px; padding: 10px; text-align: center; min-height: 68px; }
+              .dice-total-num { font-size: 2em; font-weight: 900; color: #f2c069; line-height: 1.05; }
+            `;
+            document.head.appendChild(css);
+
+            // ROLADOR FLUTUANTE D2, D4, D6, D8, D12, D20, D100
+            if (!isHub) {
+              const fab = document.createElement('div');
+              fab.className = 'omni-dice-fab';
+              fab.innerHTML = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 21 7 21 17 12 22 3 17 3 7 12 2"/><polyline points="12 22 12 12"/><polyline points="21 7 12 12 3 7"/><line x1="3" y1="17" x2="12" y2="12"/><line x1="21" y1="17" x2="12" y2="12"/></svg>';
+
+              const sheet = document.createElement('div');
+              sheet.className = 'omni-dice-sheet';
+              sheet.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #282c4e;padding-bottom:6px;margin-bottom:10px;font-weight:800;color:#f2c069;font-size:0.88em;">
+                  <span>🎲 ROLADOR POLIÉDRICO</span>
+                  <span style="cursor:pointer;padding:2px 6px;" id="omni-close-dice">✕</span>
+                </div>
+                <div class="dice-controls-row">
+                  <div class="dice-ctrl-box">
+                    <label>Qtd. Rolagens</label>
+                    <div class="stepper">
+                      <button type="button" onclick="window.omniStep('d-qty',-1,1,50)">−</button>
+                      <input type="number" id="d-qty" value="1" min="1" max="50">
+                      <button type="button" onclick="window.omniStep('d-qty',1,1,50)">+</button>
+                    </div>
+                  </div>
+                  <div class="dice-ctrl-box">
+                    <label>Modificador (-/+)</label>
+                    <div class="stepper">
+                      <button type="button" onclick="window.omniStep('d-mod',-1,-100,100)">−</button>
+                      <input type="number" id="d-mod" value="0" min="-100" max="100">
+                      <button type="button" onclick="window.omniStep('d-mod',1,-100,100)">+</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="dice-grid-btns">
+                  <button type="button" class="die-btn" onclick="window.omniRoll(2)">D2</button>
+                  <button type="button" class="die-btn" onclick="window.omniRoll(4)">D4</button>
+                  <button type="button" class="die-btn" onclick="window.omniRoll(6)">D6</button>
+                  <button type="button" class="die-btn" onclick="window.omniRoll(8)">D8</button>
+                  <button type="button" class="die-btn" onclick="window.omniRoll(12)">D12</button>
+                  <button type="button" class="die-btn" onclick="window.omniRoll(20)">D20</button>
+                  <button type="button" class="die-btn d100-btn" onclick="window.omniRoll(100)">D100 (%)</button>
+                </div>
+                <div class="dice-result-box" id="omni-dice-out">
+                  <div style="font-size:0.75em;color:#9b93c4;">Escolha o número de rolagens, o modificador e toque num dado.</div>
+                </div>
+              `;
+              document.body.appendChild(fab);
+              document.body.appendChild(sheet);
+              fab.onclick = () => sheet.classList.toggle('open');
+              sheet.querySelector('#omni-close-dice').onclick = () => sheet.classList.remove('open');
+
+              window.omniStep = function(id, d, min, max) {
+                const el = document.getElementById(id);
+                el.value = Math.max(min, Math.min(max, (parseInt(el.value) || 0) + d));
+              };
+              window.omniRoll = function(faces) {
+                const qty = Math.max(1, Math.min(50, parseInt(document.getElementById('d-qty').value) || 1));
+                const mod = parseInt(document.getElementById('d-mod').value) || 0;
+                let rolls = [], sum = 0;
+                for (let i = 0; i < qty; i++) {
+                  const r = Math.floor(Math.random() * faces) + 1;
+                  rolls.push(r); sum += r;
+                }
+                const total = sum + mod;
+                const modTxt = mod > 0 ? ' + ' + mod : (mod < 0 ? ' - ' + Math.abs(mod) : '');
+                document.getElementById('omni-dice-out').innerHTML = `
+                  <div style="font-size:0.7em;color:#8c6dff;font-weight:700;">${qty}d${faces}${modTxt}</div>
+                  <div class="dice-total-num">${total}</div>
+                  <div style="font-size:0.72em;color:#9b93c4;margin-top:4px;">Resultados: [ ${rolls.join(', ')} ]</div>
+                `;
+              };
+            }
+
+            // SALVAMENTO NATIVO MOBILE (FICHA PLAYER E DOSSIE CRIATURA)
+            function getList(k) { try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch(e) { return []; } }
+            function setList(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
+
+            if (isFicha || isDossie) {
+              const bar = document.createElement('div');
+              bar.className = 'omni-save-bar';
+              bar.innerHTML = `
+                <span class="status-txt" id="omni-st-txt">${isFicha ? '👤 FICHA DE AGENTE' : '☣️ DOSSIÊ DE CRIATURA'}</span>
+                <div class="omni-save-actions">
+                  <button type="button" class="omni-action-btn green" id="omni-btn-save">💾 Salvar na Central</button>
+                  <button type="button" class="omni-action-btn" id="omni-btn-new">+ Criar Nova</button>
+                </div>
+              `;
+              const tb = document.querySelector('.toolbar');
+              if (tb && tb.parentNode) tb.parentNode.insertBefore(bar, tb.nextSibling);
+              else document.body.insertBefore(bar, document.body.firstChild);
+
+              function coletarPlayer() {
+                const data = { basico: {}, atributos: [], recursos: [], pericias: [], habilidades: [], inventario: [] };
+                ['nome','especie','nivel','idade','altura-peso','conceito','arquetipo','classe-especial','aparencia','ranking-geral','ranking-geral-nivel'].forEach(id => {
+                  const el = document.getElementById(id); if (el) data.basico[id] = el.value;
+                });
+                document.querySelectorAll('.attr-block').forEach(b => {
+                  const s = b.querySelectorAll('select');
+                  data.atributos.push({ nome: b.querySelector('.attr-name-input').value, val: b.querySelector('.attr-value-row input').value, rank: s[0].value, level: s[1].value });
+                });
+                document.querySelectorAll('.resource-block').forEach(b => {
+                  const n = b.querySelectorAll('input[type=number]');
+                  data.recursos.push({ nome: b.querySelector('.resource-name-input').value, atual: n[0].value, max: n[1].value, cor: b.querySelector('.resource-fill').style.background });
+                });
+                document.querySelectorAll('.pericia-row').forEach(r => {
+                  const i = r.querySelectorAll('input'), s = r.querySelectorAll('select');
+                  data.pericias.push({ nome: i[0].value, pct: i[1].value, rank: s[0].value, level: s[1].value });
+                });
+                document.querySelectorAll('.habilidade-card').forEach(c => {
+                  const i = c.querySelectorAll('input');
+                  data.habilidades.push({ nome: i[0].value, tipo: c.querySelector('select').value, custo: i[1].value, desc: c.querySelector('textarea').value });
+                });
+                document.querySelectorAll('.inv-row').forEach(r => {
+                  const t = r.querySelectorAll('input[type=text]'), n = r.querySelectorAll('input[type=number]');
+                  data.inventario.push({ item: t[0].value, qtd: n[0].value, peso: n[1].value, desc: t[1].value, equip: r.querySelector('input[type=checkbox]').checked });
+                });
+                data.cargaMax = document.getElementById('carga-max')?.value || 100;
+                data.historia = document.getElementById('historia')?.value || '';
+                data.portrait = document.getElementById('portrait-img')?.src || '';
+                return data;
+              }
+
+              function aplicarPlayer(data) {
+                if (!data) return;
+                Object.entries(data.basico || {}).forEach(([id, val]) => { const el = document.getElementById(id); if (el) el.value = val; });
+                if (typeof window.updateRankingBadge === 'function') window.updateRankingBadge();
+                document.getElementById('attr-grid').innerHTML = '';
+                (data.atributos || []).forEach(a => window.addAttributeRow(a));
+                document.getElementById('recursos-list').innerHTML = '';
+                (data.recursos || []).forEach(r => window.addRecursoRow(r));
+                document.getElementById('pericias-list').innerHTML = '';
+                (data.pericias || []).forEach(p => window.addPericiaRow(p));
+                document.getElementById('habilidades-list').innerHTML = '';
+                (data.habilidades || []).forEach(h => window.addHabilidadeRow(h));
+                document.getElementById('inventario-list').innerHTML = '';
+                (data.inventario || []).forEach(i => window.addInventarioRow(i));
+                if (data.cargaMax) document.getElementById('carga-max').value = data.cargaMax;
+                if (data.historia !== undefined) document.getElementById('historia').value = data.historia;
+                if (typeof window.updateCarga === 'function') window.updateCarga();
+              }
+
+              function salvarAgora(alerta) {
+                const hoje = new Date().toLocaleDateString('pt-BR');
+                if (isFicha) {
+                  const raw = coletarPlayer();
+                  const list = getList(KEY_PLAYERS);
+                  let actId = localStorage.getItem(KEY_ACTIVE_PLAYER);
+                  let idx = list.findIndex(x => String(x.id) === String(actId));
+                  const pvTxt = raw.recursos?.[0] ? `${raw.recursos[0].atual}/${raw.recursos[0].max} PV` : 'PV';
+                  const item = {
+                    id: idx >= 0 ? list[idx].id : Date.now(),
+                    nome: raw.basico['nome'] || 'Sem Nome',
+                    sub: `${raw.basico['arquetipo'] || 'Agente'} • Nv ${raw.basico['nivel'] || 1}`,
+                    pv: pvTxt,
+                    rank: `Rank ${raw.basico['ranking-geral'] || 'D'}.${raw.basico['ranking-geral-nivel'] || 10}`,
+                    foto: raw.portrait || '',
+                    data: hoje, raw
+                  };
+                  if (idx >= 0) list[idx] = item; else { list.unshift(item); localStorage.setItem(KEY_ACTIVE_PLAYER, item.id); }
+                  setList(KEY_PLAYERS, list);
+                } else if (isDossie && typeof window.collectData === 'function') {
+                  const raw = window.collectData();
+                  const list = getList(KEY_CREATURES);
+                  let actId = localStorage.getItem(KEY_ACTIVE_CREATURE);
+                  let idx = list.findIndex(x => String(x.id) === String(actId));
+                  const peTxt = raw.bct?.[0]?.pe ? `${raw.bct[0].pe} PE` : 'PE';
+                  const item = {
+                    id: idx >= 0 ? list[idx].id : Date.now(),
+                    nome: raw.basico['nome-campo'] || 'Nova Criatura',
+                    sub: `${raw.basico['classe-ameaca'] || 'Entidade'} • Dossiê #${raw.basico['dossie-num'] || '001'}`,
+                    pv: peTxt,
+                    rank: `NP ${raw.basico['np'] || 50}`,
+                    foto: raw.foto || '',
+           
