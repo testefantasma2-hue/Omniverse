@@ -1,0 +1,58 @@
+name: Descompactar ZIP e Gerar APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-from-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar Repositorio
+        uses: actions/checkout@v4
+
+      - name: Extrair o arquivo ZIP na raiz automaticamente
+        run: |
+          if ls *.zip 1> /dev/null 2>&1; then
+            unzip -o *.zip -d .
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add .
+            git commit -m "Arquivos extraidos do ZIP automaticamente" || true
+            git push || true
+          fi
+
+      - name: Configurar Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Configurar Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+
+      - name: Montar Projeto Android (Capacitor)
+        run: |
+          npm install
+          npm run build
+          npx cap add android
+          npx cap sync android
+
+      - name: Compilar APK
+        working-directory: ./android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Entregar APK Pronto
+        uses: actions/upload-artifact@v4
+        with:
+          name: Omniverse-Android-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          
